@@ -283,7 +283,8 @@ func _apply_hover(hovering: bool) -> void:
 	_hovering = hovering
 	if not face_up:
 		return  # 牌背（牌堆）不缩放不抬高
-	var target := 1.14 if hovering else 1.0
+	var target := 1.22 if hovering else 1.0
 	var tween := create_tween()
-	tween.tween_property(self, "scale", Vector2.ONE * target, 0.08)
-	z_index = 10 if hovering else 0
+	tween.tween_property(self, "scale", Vector2.ONE * target, 0.09)
+	# 手牌多时会互相重叠：悬停的牌必须浮到最上层才看得清全貌
+	z_index = 64 if hovering else 0

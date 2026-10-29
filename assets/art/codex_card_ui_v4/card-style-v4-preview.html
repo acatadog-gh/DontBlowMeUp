@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>别炸我！卡牌样式 v4 · 气派金属框版</title>
+<style>
+  :root{
+    --felt1:#1c3b3e; --felt2:#12282b;
+    --gold-l:#f0dca6; --gold-m:#c9a25c; --gold-d:#8a6430;
+    --ink:#4a4238; --ink-soft:#8a7a5e;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; color:#fffdf6;
+    font-family:"PingFang SC","Hiragino Sans GB",sans-serif;
+    background:radial-gradient(1200px 800px at 50% -100px, var(--felt1), var(--felt2) 75%);
+  }
+  main{max-width:2900px;margin:auto;padding:56px 40px 90px}
+  h1{margin:0;text-align:center;font-size:44px;letter-spacing:6px;
+     font-family:"Songti SC","STSong",serif;font-weight:900;
+     background:linear-gradient(180deg,#f7e7bd,#c9a25c 55%,#8a6430);
+     -webkit-background-clip:text;background-clip:text;color:transparent;
+     filter:drop-shadow(0 2px 3px rgba(0,0,0,.5));}
+  .sub{margin:12px 0 46px;text-align:center;color:#c9ddda;letter-spacing:2px;font-size:15px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:36px;justify-items:center}
+
+  /* ============ 卡牌整体 ============ */
+  .card{width:320px;aspect-ratio:2/3;position:relative;
+        filter:drop-shadow(0 18px 26px rgba(0,0,0,.55));
+        transition:transform .18s ease}
+  .card:hover{transform:translateY(-8px)}
+
+  /* 外层金属框：类别深色金属渐变 + 受光/背光棱线 */
+  .frame{position:absolute;inset:0;border-radius:30px;padding:14px;
+    background:linear-gradient(160deg,var(--m-l) 0%,var(--m-m) 34%,var(--m-d) 62%,var(--m-m) 100%);
+    box-shadow:
+      inset 0 2px 1px rgba(255,255,255,.38),   /* 上棱受光 */
+      inset 0 -3px 4px rgba(0,0,0,.55),        /* 下棱背光 */
+      inset 2px 0 2px rgba(255,255,255,.12),
+      inset -2px 0 3px rgba(0,0,0,.28);
+  }
+
+  /* 卡面：米白渐变 + 织物暗纹 + 四周暗角 */
+  .face{position:absolute;inset:14px;border-radius:18px;overflow:hidden;
+    background:
+      repeating-linear-gradient(48deg,rgba(90,70,40,.028) 0 1px,transparent 1px 7px),
+      repeating-linear-gradient(-48deg,rgba(90,70,40,.02) 0 1px,transparent 1px 9px),
+      radial-gradient(140% 110% at 50% 8%, #fdf9ef 0%, #f6efdd 55%, #eadfc4 100%);
+    box-shadow:
+      inset 0 0 0 1px rgba(255,252,240,.85),
+      inset 0 0 26px rgba(112,86,40,.22);
+    padding:18px 20px 14px;
+    display:flex;flex-direction:column;align-items:center;
+  }
+  /* 内圈烫金细线 */
+  .face::before{content:"";position:absolute;inset:7px;border-radius:12px;
+    border:1px solid rgba(178,138,70,.5);
+    box-shadow:0 0 0 .5px rgba(255,244,214,.55) inset;
+    pointer-events:none;z-index:3}
+  /* 四角金饰 */
+  .corner{position:absolute;width:20px;height:20px;z-index:4;pointer-events:none;
+    border-color:var(--gold-m);border-style:solid;border-width:0;opacity:.9;
+    filter:drop-shadow(0 1px 1px rgba(255,250,230,.6))}
+  .tl{top:11px;left:11px;border-top-width:2px;border-left-width:2px;border-top-left-radius:8px}
+  .tr{top:11px;right:11px;border-top-width:2px;border-right-width:2px;border-top-right-radius:8px}
+  .bl{bottom:11px;left:11px;border-bottom-width:2px;border-left-width:2px;border-bottom-left-radius:8px}
+  .br{bottom:11px;right:11px;border-bottom-width:2px;border-right-width:2px;border-bottom-right-radius:8px}
+
+  /* 牌名：衬线重字 + 浮雕 */
+  .name{margin:0;font-family:"Songti SC","STSong",serif;font-weight:900;
+    font-size:33px;letter-spacing:.14em;line-height:1.1;text-indent:.14em;
+    color:var(--name);
+    text-shadow:0 1px 0 rgba(255,255,255,.75),0 3px 5px rgba(60,40,10,.22)}
+
+  /* 类别绶带：金边 + 类别渐变 + 燕尾切角 */
+  .ribbon-wrap{margin:7px 0 12px;filter:drop-shadow(0 2px 3px rgba(60,40,10,.3))}
+  .ribbon-gold{clip-path:polygon(11px 0,calc(100% - 11px) 0,100% 50%,calc(100% - 11px) 100%,11px 100%,0 50%);
+    background:linear-gradient(180deg,var(--gold-l),var(--gold-m) 60%,var(--gold-d));padding:2px}
+  .ribbon{clip-path:polygon(10px 0,calc(100% - 10px) 0,100% 50%,calc(100% - 10px) 100%,10px 100%,0 50%);
+    background:linear-gradient(180deg,var(--c-l),var(--c-d));
+    padding:5px 30px;font-size:14px;letter-spacing:4px;text-indent:4px;color:#fff8ea;
+    text-shadow:0 1px 1px rgba(0,0,0,.4);font-weight:600}
+
+  /* 插画窗：金属厚框 + 内投影 + 金线内圈 */
+  .art-wrap{width:100%;border-radius:16px;padding:4px;
+    background:linear-gradient(160deg,var(--m-l),var(--m-m) 40%,var(--m-d) 75%,var(--m-m));
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.4),inset 0 -2px 3px rgba(0,0,0,.45),0 3px 6px rgba(60,40,10,.28)}
+  .art{position:relative;width:100%;flex:1;min-height:0;border-radius:12px;overflow:hidden;
+    border:1px solid rgba(138,100,48,.7);
+    box-shadow:inset 0 12px 30px rgba(0,0,0,.38),inset 0 -12px 30px rgba(0,0,0,.3)}
+  .art img{width:100%;height:100%;object-fit:cover;display:block}
+  .art::after{content:"";position:absolute;inset:6px;border-radius:8px;
+    border:1px solid rgba(255,240,200,.5);pointer-events:none}
+
+  /* 收集牌组合徽章 */
+  .combos{position:absolute;right:10px;bottom:10px;display:flex;gap:6px}
+  .combos span{font-size:13px;font-weight:700;color:#ffefc9;letter-spacing:1px;
+    padding:3px 10px;border-radius:999px;
+    background:linear-gradient(180deg,var(--m-m),var(--m-d));
+    border:1px solid var(--gold-m);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.3),0 2px 3px rgba(0,0,0,.45)}
+
+  /* 规则文字 */
+  .rule{margin:11px 4px 0;font-size:13.5px;line-height:1.55;color:var(--ink);
+    text-align:center;font-weight:500}
+
+  /* 底部：金线 + 编号铜牌 */
+  .foot{margin-top:auto;width:100%;display:flex;align-items:center;gap:10px;padding-top:9px}
+  .hairline{flex:1;height:2px;border-radius:2px;
+    background:linear-gradient(90deg,transparent,var(--gold-m) 30% 70%,transparent)}
+  .no{font-size:12px;letter-spacing:3px;color:var(--ink-soft);font-weight:600;
+    padding:2px 12px;border:1px solid rgba(160,124,66,.55);border-radius:999px;
+    background:linear-gradient(180deg,rgba(255,250,235,.7),rgba(233,220,166,.45));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.8),0 1px 2px rgba(90,66,30,.25)}
+
+  /* ============ 类别配色 ============ */
+  .cat-fatal   {--c-l:#c4453a;--c-d:#7c1d14;--m-l:#b05043;--m-m:#8e2f24;--m-d:#57100a;--name:#8c2a1e}
+  .cat-save    {--c-l:#2fa184;--c-d:#14523f;--m-l:#3d9c85;--m-m:#1f6e58;--m-d:#0d3a2c;--name:#1e6b54}
+  .cat-act     {--c-l:#4a86b8;--c-d:#1f4a72;--m-l:#4a7ba6;--m-m:#2c5178;--m-d:#152c44;--name:#2c5b84}
+  .cat-counter {--c-l:#8a66be;--c-d:#453071;--m-l:#7d5cae;--m-m:#543a85;--m-d:#2c1d4a;--name:#5c4290}
+  .cat-collect {--c-l:#c97f38;--c-d:#7a4212;--m-l:#bd7c34;--m-m:#8f5318;--m-d:#54290a;--name:#96551d}
+
+  /* ============ 牌背 ============ */
+  .back .bframe{position:absolute;inset:0;border-radius:30px;padding:10px;
+    background:linear-gradient(160deg,#f0dca6,#c9a25c 38%,#7c5726 70%,#c9a25c);
+    box-shadow:inset 0 2px 1px rgba(255,255,255,.5),inset 0 -3px 5px rgba(0,0,0,.5)}
+  .bface{position:absolute;inset:10px;border-radius:22px;overflow:hidden;
+    background:
+      repeating-linear-gradient(45deg,rgba(255,255,255,.035) 0 2px,transparent 2px 26px),
+      repeating-linear-gradient(-45deg,rgba(255,255,255,.035) 0 2px,transparent 2px 26px),
+      radial-gradient(130% 100% at 50% 0%, #2f6165 0%, #22484b 55%, #143032 100%);
+    box-shadow:inset 0 0 34px rgba(0,0,0,.5);
+    display:flex;flex-direction:column;align-items:center;padding:40px 34px 30px}
+  .bface::before{content:"";position:absolute;inset:9px;border-radius:15px;
+    border:1.5px solid rgba(201,162,92,.75);
+    box-shadow:0 0 0 3px rgba(20,48,50,.9),0 0 0 4.5px rgba(201,162,92,.35)}
+  .btitle{margin:6px 0 26px;font-family:"Songti SC","STSong",serif;font-weight:900;
+    font-size:40px;letter-spacing:.22em;text-indent:.22em;
+    background:linear-gradient(180deg,#f7e7bd,#c9a25c 55%,#8a6430);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    filter:drop-shadow(0 2px 2px rgba(0,0,0,.55))}
+  .bgem{position:relative;padding:5px;border-radius:18px;
+    background:linear-gradient(160deg,#f0dca6,#c9a25c 40%,#7c5726 75%,#c9a25c);
+    box-shadow:0 8px 18px rgba(0,0,0,.5),inset 0 1px 1px rgba(255,255,255,.55)}
+  .bgem::after{content:"";position:absolute;inset:10px;border-radius:12px;
+    border:1px solid rgba(255,240,200,.55);pointer-events:none}
+  .bgem img{width:190px;height:190px;object-fit:cover;border-radius:14px;display:block;
+    border:1px solid rgba(124,87,38,.8)}
+  .ben{margin-top:auto;font-size:12px;letter-spacing:4px;white-space:nowrap;color:rgba(233,220,166,.85);
+    border-top:1px solid rgba(201,162,92,.4);border-bottom:1px solid rgba(201,162,92,.4);
+    padding:8px 4px}
+
+  /* ============ 规格说明 ============ */
+  .spec{margin-top:80px;background:rgba(0,0,0,.28);border:1px solid rgba(201,162,92,.35);
+    border-radius:18px;padding:32px 38px;max-width:1080px;margin-inline:auto}
+  .spec h2{margin:0 0 18px;font-size:22px;letter-spacing:3px;color:#f0dca6}
+  .spec p{color:#c9ddda;font-size:14px;line-height:1.9;margin:8px 0}
+  .swatches{display:flex;flex-wrap:wrap;gap:14px;margin:18px 0}
+  .sw{display:flex;align-items:center;gap:8px;font-size:13px;color:#c9ddda}
+  .sw i{width:34px;height:34px;border-radius:8px;border:1px solid rgba(255,255,255,.35);display:block}
+  code{color:#f0dca6;font-size:13px}
+</style>
+</head>
+<body>
+<main>
+  <h1>《别炸我！》卡牌样式 v4</h1>
+  <p class="sub">金属框 · 烫金饰线 · 绶带类别 · 浮雕牌名 —— 插画沿用 v3，框架全面升级</p>
+
+  <div class="grid" id="grid"></div>
+
+  <section class="spec">
+    <h2>设计规格（v4 与 v3 的区别）</h2>
+    <p><b>1. 外框：</b>纯色平边 → <b>类别色金属渐变框</b>，上棱受光、下棱背光，厚度 14px，圆角 30px。每类颜色由「浅 → 深 → 更深」三档构成，不再是一块平色。</p>
+    <p><b>2. 卡面：</b>平涂米白 → <b>米白渐变 + 斜向织物暗纹 + 四周暗角</b>，加内圈烫金细线（inset 7px）与四角金色包角，正装感来自这四层叠加。</p>
+    <p><b>3. 类别横幅：</b>纯色圆条 → <b>燕尾绶带</b>（clip-path 六边切角），金底描边 + 类别渐变 + 内投影。</p>
+    <p><b>4. 牌名：</b>普通黑体 → <b>衬线重字（宋体 900）+ 浮雕双层阴影</b>，字号加大到 33/600。</p>
+    <p><b>5. 插画窗：</b>单线描边 → <b>金属厚框 + 金色内圈线 + 上下内投影</b>，插画有「嵌进金属框」的凹陷感。</p>
+    <p><b>6. 底部：</b>裸文字 → <b>金色渐隐细线 + 铜牌式 NO. 药丸</b>；收集牌组合徽章（×2/×3/5-1）改为金属药丸压在插画窗右下。</p>
+    <p><b>7. 统一金色系：</b>所有类别共用同一套黄铜金（<code>#F0DCA6 / #C9A25C / #8A6430</code>），这是整套牌「成套、正规」的关键——类别色负责区分，金饰负责统一。</p>
+    <div class="swatches">
+      <span class="sw"><i style="background:linear-gradient(160deg,#c4453a,#57100a)"></i>致命</span>
+      <span class="sw"><i style="background:linear-gradient(160deg,#2fa184,#0d3a2c)"></i>保命</span>
+      <span class="sw"><i style="background:linear-gradient(160deg,#4a86b8,#152c44)"></i>行动</span>
+      <span class="sw"><i style="background:linear-gradient(160deg,#8a66be,#2c1d4a)"></i>反制</span>
+      <span class="sw"><i style="background:linear-gradient(160deg,#c97f38,#54290a)"></i>收集</span>
+      <span class="sw"><i style="background:linear-gradient(160deg,#f0dca6,#8a6430)"></i>统一金饰</span>
+    </div>
+    <p><b>落地方式：</b>插画沿用 v3（已裁切至 <code>art/</code> 目录，896×950）；本页即目标样式，确认后可 1:1 映射到 Godot（StyleBoxFlat 渐变 + 九宫格边框贴图）或直接出 1200×1800 PNG。</p>
+  </section>
+</main>
+
+<script>
+  const cards = [
+    {n:"爆弹",c:"特殊牌 · 致命",cls:"cat-fatal",img:"card_bomb",      rule:"抽到即爆。若你手中没有拆除卡，立即出局！",no:"NO.01"},
+    {n:"拆除",c:"特殊牌 · 保命",cls:"cat-save", img:"card_defuse",    rule:"抽到爆弹时自动生效：塞回牌堆任意位置。",no:"NO.02"},
+    {n:"跳过",c:"行动牌",cls:"cat-act",   img:"card_skip",       rule:"不抽牌，直接结束回合。",no:"NO.03"},
+    {n:"攻击",c:"行动牌",cls:"cat-act",   img:"card_attack",     rule:"结束回合，下一位必须连抽 2 张（可叠加）。",no:"NO.04"},
+    {n:"预知",c:"行动牌",cls:"cat-act",   img:"card_peek",       rule:"偷看牌堆顶 3 张，只有你看得到。",no:"NO.05"},
+    {n:"洗牌",c:"行动牌",cls:"cat-act",   img:"card_shuffle",    rule:"把牌堆重新洗乱。",no:"NO.06"},
+    {n:"偷牌",c:"行动牌",cls:"cat-act",   img:"card_steal",      rule:"随机抽走目标玩家 1 张手牌。",no:"NO.07"},
+    {n:"透支",c:"行动牌",cls:"cat-act",   img:"card_overdraw",   rule:"连续抽牌随时喊停；抽到爆弹则全弃。每回合 1 张。",no:"NO.08"},
+    {n:"休想",c:"反制牌",cls:"cat-counter",img:"card_nope",      rule:"打断他人功能牌，令其失效。不能反制拆除。",no:"NO.09"},
+    {n:"老虎钳",c:"收集牌 · 工具族",cls:"cat-collect",img:"card_tiger_pliers",   rule:"同种×2=随机偷 1 张；同种×3=念牌名索取；五种各×1=从弃牌堆回收 1 张。",no:"NO.10",combos:["×2","×3","5-1"]},
+    {n:"尖嘴钳",c:"收集牌 · 工具族",cls:"cat-collect",img:"card_needle_pliers",  rule:"同种×2=随机偷 1 张；同种×3=念牌名索取；五种各×1=从弃牌堆回收 1 张。",no:"NO.11",combos:["×2","×3","5-1"]},
+    {n:"管钳",c:"收集牌 · 工具族",cls:"cat-collect",img:"card_pipe_wrench",    rule:"同种×2=随机偷 1 张；同种×3=念牌名索取；五种各×1=从弃牌堆回收 1 张。",no:"NO.12",combos:["×2","×3","5-1"]},
+    {n:"断线钳",c:"收集牌 · 工具族",cls:"cat-collect",img:"card_cutter",         rule:"同种×2=随机偷 1 张；同种×3=念牌名索取；五种各×1=从弃牌堆回收 1 张。",no:"NO.13",combos:["×2","×3","5-1"]},
+    {n:"液压钳",c:"收集牌 · 工具族",cls:"cat-collect",img:"card_hydraulic",      rule:"同种×2=随机偷 1 张；同种×3=念牌名索取；五种各×1=从弃牌堆回收 1 张。",no:"NO.14",combos:["×2","×3","5-1"]},
+  ];
+
+  const grid = document.getElementById("grid");
+  for (const d of cards) {
+    const el = document.createElement("article");
+    el.className = "card " + d.cls;
+    el.innerHTML = `
+      <div class="frame"><div class="face">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h2 class="name">${d.n}</h2>
+        <div class="ribbon-wrap"><div class="ribbon-gold"><div class="ribbon">${d.c}</div></div></div>
+        <div class="art-wrap"><div class="art">
+          <img src="art/${d.img}.png" alt="${d.n}">
+          ${d.combos ? `<div class="combos">${d.combos.map(c=>`<span>${c}</span>`).join("")}</div>` : ""}
+        </div></div>
+        <p class="rule">${d.rule}</p>
+        <div class="foot"><span class="hairline"></span><span class="no">${d.no}</span><span class="hairline"></span></div>
+      </div></div>`;
+    grid.appendChild(el);
+  }
+
+  const back = document.createElement("article");
+  back.className = "card back";
+  back.innerHTML = `
+    <div class="bframe"><div class="bface">
+      <h2 class="btitle">别炸我！</h2>
+      <div class="bgem"><img src="art/card_bomb.png" alt="爆弹徽记"></div>
+      <p class="ben">DON'T BLOW ME UP</p>
+    </div></div>`;
+  grid.appendChild(back);
+</script>
+</body>
+</html>

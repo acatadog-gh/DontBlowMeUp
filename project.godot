@@ -18,6 +18,10 @@ config/features=PackedStringArray("4.7")
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
+## canvas_items 拉伸：窗口任意大小（含编辑器内嵌视图）都按 1280x720 画布等比缩放，
+## 鼠标坐标由引擎自动反向映射——修复内嵌窗口下按钮点不到的问题
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
 
 [rendering]
 

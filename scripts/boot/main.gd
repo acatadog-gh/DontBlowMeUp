@@ -29,7 +29,7 @@ var _hand_cards: Array[CardView] = []
 var _action_row: HBoxContainer
 var _target_row: HBoxContainer
 var _kind_row: HBoxContainer
-var _op_panel: Panel                       # 操作区独占条（三区分离：桌/操作/手牌）
+var _op_panel: Control                     # 操作层（隐形，点击优先级高于手牌）
 var _target_center: Control                # 选择行容器（需置顶于手牌之上）
 var _kind_center: Control
 var _bomb_row: HBoxContainer
@@ -68,7 +68,7 @@ const DESKTOP_COLOR := Color("1C2733")     # 桌外深色
 const FELT_COLOR := Color("223A4C")        # 桌垫毛毡
 const PANEL_COLOR := Color("3A566B")
 const GOLD := Color("E8B04B")
-const RESPONSE_SECONDS := 8                # 休想匿名响应倒计时（v0.9.1）
+const RESPONSE_SECONDS := 3                # 休想匿名响应倒计时（v0.9.3 用户拍板：8 秒改 3 秒）
 
 
 # ---- 通用样式 ----
@@ -124,13 +124,13 @@ func _build_ui() -> void:
 	bg.color = DESKTOP_COLOR
 	add_child(bg)
 
-	# 中央椭圆桌垫（毛毡 + 金描边 + 投影）——下移给顶部对手槽让位
+	# 中央椭圆桌垫（毛毡 + 金描边 + 投影）——大桌面，按钮悬浮在桌沿，不用色带切屏
 	var pad := Panel.new()
-	pad.position = Vector2(170, 136)
-	pad.size = Vector2(940, 274)
+	pad.position = Vector2(170, 88)
+	pad.size = Vector2(940, 322)
 	var pad_style := StyleBoxFlat.new()
 	pad_style.bg_color = FELT_COLOR
-	pad_style.set_corner_radius_all(137)
+	pad_style.set_corner_radius_all(160)
 	pad_style.border_color = Color("C9A227")
 	pad_style.set_border_width_all(2)
 	pad_style.shadow_size = 24
@@ -143,7 +143,7 @@ func _build_ui() -> void:
 	pad_inner.size = pad.size - Vector2(28, 28)
 	var inner_style := StyleBoxFlat.new()
 	inner_style.bg_color = Color(1, 1, 1, 0.03)
-	inner_style.set_corner_radius_all(116)
+	inner_style.set_corner_radius_all(140)
 	inner_style.border_color = Color(1, 1, 1, 0.06)
 	inner_style.set_border_width_all(1)
 	pad_inner.add_theme_stylebox_override("panel", inner_style)
@@ -186,7 +186,7 @@ func _build_ui() -> void:
 
 	# ---- 中央出牌展示 ----
 	_center_play = Control.new()
-	_center_play.position = Vector2(576, 150)
+	_center_play.position = Vector2(576, 140)
 	add_child(_center_play)
 	_center_hint = _make_label("出牌区", 12, Color(1, 1, 1, 0.3))
 	_center_hint.position = Vector2(612, 210)
@@ -220,58 +220,59 @@ func _build_ui() -> void:
 	_hand_area.size = Vector2(1280, 214)
 	add_child(_hand_area)
 
-	# ---- 操作区独占条（中部，不透明底板）----
-	_op_panel = Panel.new()
+	# ---- 操作层（隐形，几何上位于桌垫与手牌之间）----
+	# 不画底色，按钮悬浮在桌面上；但这一层在手牌区之后声明，点击优先级更高，
+	# 卡片永远不会抢走按钮——分区靠几何位置，不靠色带。
+	_op_panel = Control.new()
 	_op_panel.position = Vector2(0, 414)
 	_op_panel.size = Vector2(1280, 92)
-	var op_style := StyleBoxFlat.new()
-	op_style.bg_color = Color(0.04, 0.10, 0.17, 0.97)
-	op_style.border_color = Color(1, 1, 1, 0.10)
-	op_style.border_width_top = 1
-	op_style.border_width_bottom = 1
-	op_style.shadow_size = 8
-	op_style.shadow_color = Color(0, 0, 0, 0.35)
-	_op_panel.add_theme_stylebox_override("panel", op_style)
-	_op_panel.z_index = 20   # 压过手牌悬停时的 z_index=10，卡片永远不会画到操作条上面
 	add_child(_op_panel)
 
-	# 回合状态文字放操作条顶部：既填满空带，又紧跟当前可做的操作
-	_status_label.position = Vector2(16, 6)
-	_status_label.size = Vector2(1248, 22)
+	# 回合状态文字：居中悬浮，像游戏 HUD 提示
+	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_status_label.position = Vector2(0, 2)
+	_status_label.size = Vector2(1280, 22)
 	_op_panel.add_child(_status_label)
 
 	var action_center := CenterContainer.new()
 	action_center.position = Vector2(0, 30)
 	action_center.size = Vector2(1280, 48)
+	action_center.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 容器只管排版，不拦截点击
 	_op_panel.add_child(action_center)
 	_action_row = HBoxContainer.new()
 	_action_row.add_theme_constant_override("separation", 8)
+	_action_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	action_center.add_child(_action_row)
 
 	var target_center := CenterContainer.new()
 	target_center.position = Vector2(0, 28)
 	target_center.size = Vector2(1280, 56)
-	_op_panel.add_child(target_center)
+	target_center.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 关键：与 action_center 同位重叠，
+	_op_panel.add_child(target_center)                          # 不穿透会吃掉动作按钮的点击
 	_target_center = target_center
 	_target_row = HBoxContainer.new()
 	_target_row.add_theme_constant_override("separation", 8)
+	_target_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	target_center.add_child(_target_row)
 
 	var kind_center := CenterContainer.new()
 	kind_center.position = Vector2(0, 28)
 	kind_center.size = Vector2(1280, 56)
+	kind_center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_op_panel.add_child(kind_center)
 	_kind_center = kind_center
 	_kind_row = HBoxContainer.new()
 	_kind_row.add_theme_constant_override("separation", 8)
+	_kind_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	kind_center.add_child(_kind_row)
 
-	# 暗置爆弹（也在操作条内，与手牌完全隔离）
+	# 暗置爆弹（同样悬浮，与手牌完全隔离）
 	_bomb_row = HBoxContainer.new()
 	_bomb_row.add_theme_constant_override("separation", 10)
 	_bomb_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	_bomb_row.position = Vector2(0, 34)
 	_bomb_row.size = Vector2(1280, 44)
+	_bomb_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var bomb_label := _make_label("暗置爆弹位置：", 14)
 	_bomb_row.add_child(bomb_label)
 	_bomb_slider = HSlider.new()
@@ -414,6 +415,14 @@ func _on_start_game() -> void:
 
 func _on_log(message: String) -> void:
 	_log_label.append_text(message + "\n")
+
+
+## 输入诊断：GUI 按钮吃掉的点击不会走到这里；走到这里 = 点在了空白/被忽略区域。
+## 按钮"按不动"时看输出台有没有这行，能区分"没点到按钮"还是"点了没生效"。
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed \
+			and event.button_index == MOUSE_BUTTON_LEFT:
+		print("[诊断] 本次点击落在空白区域：", event.position)
 
 
 func _clear_rows() -> void:

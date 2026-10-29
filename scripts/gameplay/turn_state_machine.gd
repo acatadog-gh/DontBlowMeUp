@@ -15,6 +15,7 @@ extends RefCounted
 
 signal log_message(message: String)
 signal bomb_exploded(player_name: String)   # 爆弹引爆（供 UI 播放爆炸特效）
+signal action_fx(fx: Dictionary)            # 动作演出（供 UI 播放动画，不参与规则）
 
 enum TurnPhase { ACTION, OVERDRAW, BOMB_PLACEMENT, RESPONSE, FLUSH_PICK, GAME_OVER }
 
@@ -89,6 +90,13 @@ func _emit(message: String) -> void:
 	log_message.emit(message)
 
 
+## 动作演出事件（纯表现：供 UI 播放飞牌/横幅/抖动，不参与任何规则判定）。
+## fx_type 见 NetProtocol.FX_*；kind = 牌种类（-1 表示不展示具体牌）；count = 张数。
+func _fx(fx_type: String, actor: int, target := -1, kind := -1, count := 1) -> void:
+	action_fx.emit({"fx": fx_type, "actor": actor, "target": target,
+			"kind": kind, "count": count})
+
+
 ## 发牌并开局（NUM-001）：每人 4 功能 + 1 拆除，爆弹与额外拆除洗入公共牌池。
 func start_game(player_names: PackedStringArray, seed_value: int) -> void:
 	var p := player_names.size()
@@ -145,6 +153,9 @@ func _propose(type: String, hand_index: int, target := -1, wanted_kind := -1, ex
 	_pending_effect = {"type": type, "actor": _current, "target": target, "wanted_kind": wanted_kind}
 	_pending_effect.merge(extra)
 	phase = TurnPhase.RESPONSE
+	# 演出：牌从打出者手里飞到出牌区（拆弹工具组合不展示具体牌名，kind=-1）
+	_fx(NetProtocol.FX_PLAY, _current, target,
+			-1 if type == "pliers" else int(_card_kind_of(type)))
 	if type == "pliers":
 		_emit(current().name + " 打出了拆弹工具组合，进入休想响应时间（持牌者可反制）……")
 	else:
@@ -333,7 +344,7 @@ func respond_wish(use_wish: bool, responder_index := -1) -> bool:
 			wish_index = i
 			break
 	if wish_index < 0:
-		push_error("该玩家没有休想牌")
+		# 用户正常误点路径（点了自己没有休想的名字），UI 会提示"反制无效"，不算引擎错误
 		return false
 	var wish_card: Card = responder.hand[wish_index]
 	responder.hand.remove_at(wish_index)
@@ -341,6 +352,8 @@ func respond_wish(use_wish: bool, responder_index := -1) -> bool:
 	_emit("%s 打出【休想】！%s 的【%s】失效（两张牌均进弃牌堆）" % [
 		responder.name, _players[int(_pending_effect.actor)].name,
 		Card.display_name(_card_kind_of(_pending_effect.type))])
+	_fx(NetProtocol.FX_WISH, responder_index, int(_pending_effect.actor),
+			int(_card_kind_of(_pending_effect.type)))
 	_pending_effect = {}
 	_end_turn()
 	return true
@@ -356,11 +369,13 @@ func _resolve_pending() -> void:
 	match type:
 		"skip":
 			_emit("【跳过】生效，%s 不抽牌结束回合" % _players[actor].name)
+			_fx(NetProtocol.FX_SKIP, actor)
 			_pending_effect = {}
 			_end_turn()
 		"attack":
 			_pending_draws += 2
 			_emit("【攻击】生效！下家将多抽 %d 次" % _pending_draws)
+			_fx(NetProtocol.FX_ATTACK, actor, -1, -1, _pending_draws)
 			_pending_effect = {}
 			_end_turn()
 		"peek":
@@ -370,11 +385,13 @@ func _resolve_pending() -> void:
 				parts.append("%d.%s" % [i + 1, Card.display_name(top[i].kind)])
 			last_peek_result = " ".join(parts)
 			_emit("【预知】生效（结果仅 %s 本人可见）" % _players[actor].name)
+			_fx(NetProtocol.FX_PEEK, actor)
 			_pending_effect = {}
 			_end_turn()
 		"shuffle":
 			_deck.shuffle()
 			_emit("【洗牌】生效，牌堆已重洗")
+			_fx(NetProtocol.FX_SHUFFLE, actor)
 			_pending_effect = {}
 			_end_turn()
 		"steal":
@@ -384,6 +401,7 @@ func _resolve_pending() -> void:
 			target.hand.remove_at(idx)
 			_players[actor].hand.append(stolen)
 			_emit("【偷牌】生效：%s 从 %s 处偷走 1 张牌" % [_players[actor].name, target.name])
+			_fx(NetProtocol.FX_STEAL, actor, int(_pending_effect.target))
 			_pending_effect = {}
 			_end_turn()
 		"overdraw":
@@ -392,6 +410,7 @@ func _resolve_pending() -> void:
 			_current = actor
 			phase = TurnPhase.OVERDRAW
 			_emit("【透支】生效！%s 可连续抽牌，随时喊停（炸则全弃）" % _players[actor].name)
+			_fx(NetProtocol.FX_OVERDRAW, actor)
 			_pending_effect = {}
 		"pliers":
 			var combo: String = _pending_effect.combo
@@ -407,6 +426,7 @@ func _resolve_pending() -> void:
 					_players[actor].hand.append(stolen)
 					_emit("【拆弹工具·对子】生效：%s 从 %s 处随机偷走 1 张手牌（不亮牌）" % [
 						_players[actor].name, target.name])
+					_fx(NetProtocol.FX_STEAL, actor, int(_pending_effect.target))
 					_pending_effect = {}
 					_end_turn()
 				"trio":
@@ -422,6 +442,7 @@ func _resolve_pending() -> void:
 						_players[actor].hand.append(got)
 						_emit("%s 手里有【%s】，必须交给 %s" % [
 							target.name, Card.display_name(got.kind), _players[actor].name])
+						_fx(NetProtocol.FX_STEAL, actor, int(_pending_effect.target), int(got.kind))
 					else:
 						_emit("%s 手里没有【%s】，无事发生" % [
 							target.name, Card.display_name(_pending_effect.wanted_kind)])
@@ -455,6 +476,7 @@ func flush_pick(discard_index: int) -> void:
 		return
 	current().hand.append(card)
 	_emit("%s 从弃牌堆回收 1 张【%s】" % [current().name, Card.display_name(card.kind)])
+	_fx(NetProtocol.FX_FLUSH, _current, -1, int(card.kind))
 	_end_turn()
 
 
@@ -480,6 +502,7 @@ func normal_draw() -> void:
 	current().hand.append(card)
 	_required_draws -= 1
 	_emit(current().name + " 抽到一张【" + Card.display_name(card.kind) + "】，回合结束")
+	_fx(NetProtocol.FX_DRAW, _current, -1, int(card.kind))
 	if _required_draws <= 0:
 		_end_turn()
 
@@ -507,6 +530,7 @@ func overdraw_draw() -> void:
 
 	current().overdraw_zone.append(card)
 	_emit("透支 +1：【%s】进透支区（共 %d 张，喊停全部入手，抽中爆弹全弃）" % [Card.display_name(card.kind), current().overdraw_zone.size()])
+	_fx(NetProtocol.FX_DRAW, _current, -1, int(card.kind))
 
 
 ## MECH-008：喊停——透支区全部入手；v0.6 起喊停即回合结束。
@@ -517,6 +541,7 @@ func stop_overdraw() -> void:
 	for card in current().overdraw_zone:
 		current().hand.append(card)
 	_emit(current().name + " 喊停，收入 %d 张，回合结束" % current().overdraw_zone.size())
+	_fx(NetProtocol.FX_OVERDRAW_STOP, _current, -1, -1, current().overdraw_zone.size())
 	current().overdraw_zone.clear()
 	_end_turn()
 
@@ -528,6 +553,7 @@ func confirm_bomb_placement(index: int) -> void:
 		return
 	_deck.insert_at(_bomb_to_place, index)
 	_emit(current().name + " 将爆弹暗置回牌堆（仅其本人知道位置），回合结束")
+	_fx(NetProtocol.FX_BOMB_PLACE, _current)
 	_bomb_to_place = null
 	phase = TurnPhase.ACTION
 	_end_turn()
@@ -543,6 +569,7 @@ func _resolve_bomb(bomb: Card, from_overdraw: bool) -> void:
 		_bomb_to_place = bomb
 		phase = TurnPhase.BOMB_PLACEMENT
 		_emit(current().name + " 使用拆除卡！请选择爆弹暗置位置 0-%d" % _deck.draw_count())
+		_fx(NetProtocol.FX_DEFUSE, _current)
 	else:
 		_deck.send_to_exploded(bomb)
 		exploded_bombs_total += 1
