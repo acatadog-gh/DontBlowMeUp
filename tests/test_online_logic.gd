@@ -20,6 +20,9 @@ func _check(cond: bool, label: String) -> void:
 func _initialize() -> void:
 	_test_room_flow()
 	_test_peek_privacy()
+	_test_skip_wish_online()
+	_test_empty_hand_online()
+	_test_exhausted_online()
 	print("---")
 	print("逻辑自检：%d 通过，%d 失败" % [_passes, _failures])
 	quit(1 if _failures > 0 else 0)
@@ -192,7 +195,7 @@ func _test_room_flow() -> void:
 	manager.session_offline(103)
 	# 全部掉线后房间保留（M2.3 重连前策略：由 server_main 回收；管理器不自动删）
 	_check(manager._rooms.has("111111") or true, "管理器状态稳定（无崩溃）")
-	print("PASS  [NET-1] 共 %d 项断言执行完毕" % (_passes + _failures))
+	print("[NET-1] 共 %d 项断言执行完毕" % (_passes + _failures))
 
 
 ## [NET-2] 预知（MECH-005）结果隐私：只发给打出者，窗口被谁关闭/是否超时都不影响归属。
@@ -234,7 +237,223 @@ func _test_peek_privacy() -> void:
 	room.tick(room.response_deadline_ms + 1.0)
 	_check(_peek_seen(inbox, 201, actor), "路径B：超时结算时结果仍发给打出者")
 	_check(not _peek_seen(inbox, 201, other), "路径B：结果没有泄露给下家")
-	print("PASS  [NET-2] 共 %d 项断言执行完毕" % (_passes + _failures))
+	print("[NET-2] 共 %d 项断言执行完毕" % (_passes + _failures))
+
+
+## v0.9.6（用户拍板）：项目重心是联机版，这两条规则必须在 NetRoom 权威层被守住。
+##  A) 跳过 × 休想：反制后跳过失效 != 回合轮转，出牌者留在本回合、仍须照常抽牌
+##  B) 透支：抽到的牌名只发给出牌者本人，公共广播与其他人视图都拿不到
+func _test_skip_wish_online() -> void:
+	print("[NET-3] 跳过×休想 / 透支隐私（联机权威层）")
+	# ---- A) 跳过被休想反制 ----
+	var logs_by_seat := {301: [], 302: [], 303: []}
+	var public_log: Array = []
+	var manager := NetRoomManager.new()
+	var room := manager.create_room(301, "甲", "222222")
+	room.send_seat = func(seat: int, text: String) -> void:
+		logs_by_seat[301 + seat].append(String(NetProtocol.decode(text).get("msg", "")))
+	room.send_all = func(text: String) -> void:
+		public_log.append(String(NetProtocol.decode(text).get("msg", "")))
+	manager.join_room(302, "乙", "222222")
+	manager.join_room(303, "丙", "222222")
+	_check(room.start_game(11), "NET-3 三人开局")
+	room.machine._current = 0
+	room.machine.phase = TurnStateMachine.TurnPhase.ACTION
+	_force_hand(room.machine.players()[0], [Card.Kind.SKIP])
+	_force_hand(room.machine.players()[2], [Card.Kind.WISH])
+
+	var now := 1000.0
+	room.handle(0, {"t": NetProtocol.T_ACT, "a": NetProtocol.A_PLAY, "card": 0}, now)
+	_check(room.machine.phase == TurnStateMachine.TurnPhase.RESPONSE, "NET-3 跳过进入匿名响应窗口")
+	_check(String(room.build_view(0).get("phase", "")) == "response", "NET-3 客户端视图为响应阶段")
+
+	room.handle(2, {"t": NetProtocol.T_WISH, "use": true}, now + 500.0)
+	var v_actor := room.build_view(0)
+	var v_next := room.build_view(1)
+	var v_wisher := room.build_view(2)
+	_check(String(v_actor.get("phase", "")) == "action", "NET-3 反制后出牌者视图回到出牌阶段")
+	_check(bool(v_actor.get("your_turn", false)), "NET-3 反制后回合仍在出牌者身上")
+	_check(int(v_actor.get("required_draws", 0)) == 1, "NET-3 反制后仍需照常抽 1 张")
+	_check(not bool(v_next.get("your_turn", true)), "NET-3 下家没有拿到回合")
+	_check(not bool(v_wisher.get("your_turn", true)), "NET-3 反制者没有额外获得回合")
+	_check(room.response_deadline_ms == 0.0, "NET-3 响应窗口关闭、倒计时清零")
+	room.handle(0, {"t": NetProtocol.T_ACT, "a": NetProtocol.A_DRAW}, now + 900.0)
+	_check(not bool(room.build_view(0).get("your_turn", true)), "NET-3 反制后出牌者可正常抽牌结束回合")
+
+	# ---- B) 透支抽到的牌只给本人 ----
+	var logs2 := {401: [], 402: []}
+	var public2: Array = []
+	var manager2 := NetRoomManager.new()
+	var room2 := manager2.create_room(401, "甲", "333333")
+	room2.send_seat = func(seat: int, text: String) -> void:
+		logs2[401 + seat].append(String(NetProtocol.decode(text).get("msg", "")))
+	room2.send_all = func(text: String) -> void:
+		public2.append(String(NetProtocol.decode(text).get("msg", "")))
+	manager2.join_room(402, "乙", "333333")
+	_check(room2.start_game(23), "NET-3 两人开局（透支场景）")
+	room2.machine._current = 0
+	room2.machine.phase = TurnStateMachine.TurnPhase.ACTION
+	_force_hand(room2.machine.players()[0], [Card.Kind.OVERDRAW])
+	_force_hand(room2.machine.players()[1], [Card.Kind.WISH])
+
+	room2.handle(0, {"t": NetProtocol.T_ACT, "a": NetProtocol.A_PLAY, "card": 0}, now)
+	if room2.machine.phase == TurnStateMachine.TurnPhase.RESPONSE:
+		room2.handle(1, {"t": NetProtocol.T_WISH, "use": false}, now + 100.0)
+	_check(room2.machine.phase == TurnStateMachine.TurnPhase.OVERDRAW, "NET-3 透支进入连抽阶段")
+	room2.handle(0, {"t": NetProtocol.T_ACT, "a": NetProtocol.A_OVERDRAW_DRAW}, now + 200.0)
+
+	var zone: Array = room2.machine.players()[0].overdraw_zone
+	_check(not zone.is_empty(), "NET-3 首抽为非爆弹，入透支区")
+	if not zone.is_empty():
+		var drawn_name := Card.display_name(zone[0].kind)
+		var pub_text := " ".join(public2)
+		var own_text := " ".join(logs2[401])
+		var other_text := " ".join(logs2[402])
+		_check(not pub_text.contains("抽到【"), "NET-3 公共广播不出现抽到的牌名")
+		_check(own_text.contains("你抽到【%s】" % drawn_name), "NET-3 本人收到私有牌名提示")
+		_check(not other_text.contains("抽到【"), "NET-3 其他座位收不到牌名")
+	var own_view: Array = room2.build_view(0).get("overdraw", [])
+	var other_view: Array = room2.build_view(1).get("overdraw", [])
+	_check(own_view.size() == 1, "NET-3 本人视图能看到透支区牌面")
+	_check(other_view.is_empty(), "NET-3 他人视图里透支区为空（隐私）")
+
+	# ---- C) 休想只在自己视图里可见（客户端据此决定是否显示反制入口）----
+	var own_hand: Array = room2.build_view(1).get("hand", [])
+	var rival_hand: Array = room2.build_view(0).get("hand", [])
+	_check(own_hand.has(Card.Kind.WISH), "NET-3 持牌者本人能看到自己的休想")
+	_check(not rival_hand.has(Card.Kind.WISH), "NET-3 别人视图里看不到我的休想")
+
+
+## MECH-014（v0.9.7 用户拍板）：空手维持现状——只能抽牌、不能出牌（含休想）、不能被抢，不补牌不淘汰。
+func _test_empty_hand_online() -> void:
+	print("[NET-4] 空手（0 张）规则（MECH-014）")
+	var manager := NetRoomManager.new()
+	var room := manager.create_room(501, "甲", "444444")
+	room.send_seat = func(_seat: int, _text: String) -> void:
+		pass
+	room.send_all = func(_text: String) -> void:
+		pass
+	manager.join_room(502, "乙", "444444")
+	manager.join_room(503, "丙", "444444")
+	_check(room.start_game(31), "NET-4 三人开局")
+	var m := room.machine
+	m._current = 0
+	m.phase = TurnStateMachine.TurnPhase.ACTION
+	m.players()[0].hand.clear()
+
+	var v := room.build_view(0)
+	_check((v.get("hand", []) as Array).is_empty(), "NET-4 空手视图里手牌为空")
+	_check(bool(v.get("your_turn", false)), "NET-4 空手玩家仍轮到自己")
+	_check(String(v.get("phase", "")) == "action", "NET-4 空手仍在出牌阶段（客户端可点抽牌）")
+	_check(int(v.get("required_draws", 0)) >= 1, "NET-4 空手仍需抽牌")
+
+	# 空手时出牌请求被忽略（越界下标，服务器不崩、状态不变）
+	room.handle(0, {"t": NetProtocol.T_ACT, "a": NetProtocol.A_PLAY, "card": 0}, 1000.0)
+	_check(m.players()[0].hand.is_empty() and m.phase == TurnStateMachine.TurnPhase.ACTION,
+			"NET-4 空手出牌请求被忽略且不改变阶段")
+
+	# 空手时打不出休想（手里没有牌，引擎按无牌拒绝）
+	m._current = 1
+	_force_hand(m.players()[1], [Card.Kind.SKIP])
+	room.handle(1, {"t": NetProtocol.T_ACT, "a": NetProtocol.A_PLAY, "card": 0}, 1100.0)
+	_check(m.phase == TurnStateMachine.TurnPhase.RESPONSE, "NET-4 空手局面下别人打功能牌仍进响应窗口")
+	_check(not m.respond_wish(true, 0), "NET-4 空手玩家无法打出休想")
+	m.respond_wish(false)
+
+	# 空手不能被指定为偷牌目标：偷牌不消耗、手牌仍为 0
+	m._current = 1
+	m.phase = TurnStateMachine.TurnPhase.ACTION
+	_force_hand(m.players()[1], [Card.Kind.STEAL])
+	var steal_before := m.players()[1].hand.size()
+	room.handle(1, {"t": NetProtocol.T_ACT, "a": NetProtocol.A_PLAY, "card": 0, "target": 0}, 1200.0)
+	_check(m.players()[0].hand.is_empty(), "NET-4 空手目标没被抢到牌")
+	_check(m.players()[1].hand.size() == steal_before, "NET-4 偷空手目标的偷牌不消耗（留在手里）")
+
+	# 空手轮到自己抽一张即可恢复（或抽到爆弹出局）
+	m._current = 0
+	m.phase = TurnStateMachine.TurnPhase.ACTION
+	room.handle(0, {"t": NetProtocol.T_ACT, "a": NetProtocol.A_DRAW}, 1300.0)
+	_check(m.players()[0].hand.size() == 1 or not m.players()[0].alive,
+			"NET-4 空手抽一张后恢复手牌（或抽到爆弹出局）")
+
+
+## MECH-015（v0.9.8 用户拍板）：牌池与弃牌堆双空时，权威层按手牌数裁定终局并广播原因。
+func _test_exhausted_online() -> void:
+	print("[NET-5] 牌池双空保底终局（MECH-015，联机权威层）")
+
+	# ---- A) 手牌最多者独占 → 该玩家获胜，事件标明"耗尽"而非爆弹 ----
+	var events: Array = []
+	var manager := NetRoomManager.new()
+	var room := manager.create_room(901, "甲", "555555")
+	room.send_seat = func(_seat: int, _text: String) -> void:
+		pass
+	room.send_all = func(text: String) -> void:
+		events.append(NetProtocol.decode(text))
+	manager.join_room(902, "乙", "555555")
+	manager.join_room(903, "丙", "555555")
+	_check(room.start_game(41), "NET-5 三人开局")
+	var m := room.machine
+	m._deck._draw.clear()
+	m._deck._discard.clear()
+	m._current = 0
+	m.phase = TurnStateMachine.TurnPhase.ACTION
+	_force_hand(m.players()[0], [Card.Kind.SKIP])
+	_force_hand(m.players()[1], [Card.Kind.SKIP, Card.Kind.SKIP, Card.Kind.SKIP])
+	_force_hand(m.players()[2], [Card.Kind.SKIP, Card.Kind.SKIP])
+
+	room.handle(0, {"t": NetProtocol.T_ACT, "a": NetProtocol.A_DRAW}, 1000.0)
+	var v := room.build_view(0)
+	_check(String(v.get("phase", "")) == "over", "NET-5 双空抽牌后视图进入终局")
+	_check(String(v.get("winner", "")) == "乙", "NET-5 视图给出按手牌裁定的赢家")
+	_check(not bool(v.get("draw_game", true)), "NET-5 赢家独占时不标记平局")
+	_check(bool(v.get("exhausted", false)), "NET-5 视图标记本局为牌池耗尽收场")
+	var over_msg := _last_game_over(events)
+	_check(not over_msg.is_empty(), "NET-5 广播了终局事件")
+	_check(String(over_msg.get("winner", "")) == "乙", "NET-5 终局事件带赢家名")
+	_check(String(over_msg.get("why", "")) == "exhausted", "NET-5 终局事件标明耗尽原因")
+	_check(not bool(over_msg.get("draw", true)), "NET-5 终局事件 draw=false")
+
+	# ---- B) 存活玩家手牌并列最多 → 判和（winner 为空、draw=true）----
+	var events2: Array = []
+	var manager2 := NetRoomManager.new()
+	var room2 := manager2.create_room(911, "甲", "666666")
+	room2.send_seat = func(_seat: int, _text: String) -> void:
+		pass
+	room2.send_all = func(text: String) -> void:
+		events2.append(NetProtocol.decode(text))
+	manager2.join_room(912, "乙", "666666")
+	_check(room2.start_game(43), "NET-5 两人开局（判和场景）")
+	var m2 := room2.machine
+	m2._deck._draw.clear()
+	m2._deck._discard.clear()
+	m2._current = 0
+	m2.phase = TurnStateMachine.TurnPhase.ACTION
+	_force_hand(m2.players()[0], [Card.Kind.SKIP, Card.Kind.SKIP])
+	_force_hand(m2.players()[1], [Card.Kind.SKIP, Card.Kind.SKIP])
+	room2.handle(0, {"t": NetProtocol.T_ACT, "a": NetProtocol.A_DRAW}, 2000.0)
+	var v2 := room2.build_view(0)
+	_check(bool(v2.get("draw_game", false)), "NET-5 并列最多 → 视图标记平局")
+	_check(String(v2.get("winner", "x")) == "", "NET-5 平局时视图赢家为空")
+	var draw_msg := _last_game_over(events2)
+	_check(bool(draw_msg.get("draw", false)), "NET-5 平局终局事件 draw=true")
+
+
+## 取出最后一条终局事件（没有则返回空字典）。
+func _last_game_over(events: Array) -> Dictionary:
+	var found := {}
+	for e in events:
+		if String(e.get("e", "")) == NetProtocol.E_GAME_OVER:
+			found = e
+	return found
+
+
+## 把玩家手牌换成指定牌（测试用，直接改权威状态）。
+func _force_hand(player: PlayerState, kinds: Array) -> void:
+	player.hand.clear()
+	var i := 0
+	for k in kinds:
+		player.hand.append(Card.new(int(k), 90000 + i))
+		i += 1
 
 
 ## 指定会话的收件箱里是否出现过预知结果事件。

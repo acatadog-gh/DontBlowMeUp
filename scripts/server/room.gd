@@ -52,10 +52,6 @@ func connected_count() -> int:
 	return seats.size()
 
 
-func has_session(session_id: int) -> bool:
-	return seats.has(session_id)
-
-
 func seat_of(session_id: int) -> int:
 	return seats.find(session_id)
 
@@ -75,6 +71,11 @@ func start_game(seed_value: int) -> bool:
 	machine.start_game(names, seed_value)
 	machine.log_message.connect(func(message: String) -> void:
 		send_all.call(NetProtocol.encode({"t": NetProtocol.T_LOG, "msg": message})))
+	# v0.9.6：私密日志只发给指定座位（透支抽到的具体牌名等，其他人收不到）
+	machine.log_private.connect(func(message: String, player_index: int) -> void:
+		if send_seat.is_valid() and player_index >= 0 and player_index < seats.size() \
+				and seats[player_index] >= 0:
+			send_seat.call(player_index, NetProtocol.encode({"t": NetProtocol.T_LOG, "msg": message})))
 	machine.bomb_exploded.connect(func(player_name: String) -> void:
 		send_all.call(NetProtocol.encode({
 			"t": NetProtocol.T_EVENT, "e": NetProtocol.E_BOMB, "name": player_name})))
@@ -124,7 +125,10 @@ func _post_process(actor_seat: int, now_ms: float) -> void:
 		_game_over_sent = true
 		send_all.call(NetProtocol.encode({
 			"t": NetProtocol.T_EVENT, "e": NetProtocol.E_GAME_OVER,
-			"winner": machine.winner.name if machine.winner != null else ""}))
+			"winner": machine.winner.name if machine.winner != null else "",
+			# MECH-015：牌池双空可能以"判和"收场，客户端据此区分"平局"与"无存活玩家"
+			"draw": machine.draw_game,
+			"why": "exhausted" if machine.exhausted_end else "bomb"}))
 	broadcast_view()
 
 
@@ -302,6 +306,8 @@ func build_view(seat: int) -> Dictionary:
 		"required_draws": machine._required_draws,
 		"exploded": machine.exploded_bombs_total,
 		"winner": machine.winner.name if machine.winner != null else "",
+		"draw_game": machine.draw_game,
+		"exhausted": machine.exhausted_end,
 	}
 	# 公共倒计时：响应窗口剩余毫秒（客户端据此校准本地倒计时，不暴露任何持牌信息）
 	if machine.phase == TurnStateMachine.TurnPhase.RESPONSE:

@@ -1,4 +1,4 @@
-# @trace MECH-001, MECH-002, MECH-003, MECH-004, MECH-005, MECH-006, MECH-007, MECH-008, MECH-009, MECH-011, MECH-012, MECH-013, NUM-001, NUM-002
+# @trace MECH-001, MECH-002, MECH-003, MECH-004, MECH-005, MECH-006, MECH-007, MECH-008, MECH-009, MECH-011, MECH-012, MECH-013, MECH-015, NUM-001, NUM-002
 ## 回合状态机。
 ## v0.6 规则（用户拍板）：
 ##   - 轮转条件修订（MECH-009）：出 1 张功能牌或抽 1 张牌后，回合立即结束轮到下家；
@@ -14,6 +14,8 @@ class_name TurnStateMachine
 extends RefCounted
 
 signal log_message(message: String)
+## v0.9.6：仅指定玩家可见的私密日志（透支抽到的具体牌名等），服务端只发给该座位。
+signal log_private(message: String, player_index: int)
 signal bomb_exploded(player_name: String)   # 爆弹引爆（供 UI 播放爆炸特效）
 signal action_fx(fx: Dictionary)            # 动作演出（供 UI 播放动画，不参与规则）
 
@@ -36,6 +38,9 @@ var _pending_effect := {}         # {type, target, wanted_kind, actor}
 
 var phase: TurnPhase = TurnPhase.ACTION
 var winner: PlayerState
+## MECH-015 保底终局：牌池与弃牌堆双空时，按手牌数裁定终局。
+var exhausted_end := false     # 本局由"牌池双空"裁定结束（而非爆弹引爆决出）
+var draw_game := false         # 双空且存活玩家手牌并列最多 → 判和
 var last_peek_result := ""
 var exploded_bombs_total := 0
 
@@ -90,6 +95,11 @@ func _emit(message: String) -> void:
 	log_message.emit(message)
 
 
+## 私密日志：只给指定玩家看，公共日志里不出现这条内容（MECH-008 透支抽牌）。
+func _emit_private(message: String, player_index: int) -> void:
+	log_private.emit(message, player_index)
+
+
 ## 动作演出事件（纯表现：供 UI 播放飞牌/横幅/抖动，不参与任何规则判定）。
 ## fx_type 见 NetProtocol.FX_*；kind = 牌种类（-1 表示不展示具体牌）；count = 张数。
 func _fx(fx_type: String, actor: int, target := -1, kind := -1, count := 1) -> void:
@@ -138,6 +148,8 @@ func start_game(player_names: PackedStringArray, seed_value: int) -> void:
 	_overdraw_used_this_turn = false
 	exploded_bombs_total = 0
 	winner = null
+	exhausted_end = false
+	draw_game = false
 	_pending_effect = {}
 	phase = TurnPhase.ACTION
 	_emit("开局：共 %d 名玩家，牌堆 %d 张，爆弹 %d 枚" % [p, _deck.draw_count(), _config.bomb_count_for(p)])
@@ -338,6 +350,10 @@ func respond_wish(use_wish: bool, responder_index := -1) -> bool:
 		push_error("不能反制自己打出的牌")
 		return false
 	var responder := _players[responder_index]
+	if not responder.alive:
+		# 出局玩家的手牌不清理（结算展示要用），但绝不能再参与反制
+		push_error("已出局的玩家不能打出休想")
+		return false
 	var wish_index := -1
 	for i in responder.hand.size():
 		if responder.hand[i].kind == Card.Kind.WISH:
@@ -349,12 +365,24 @@ func respond_wish(use_wish: bool, responder_index := -1) -> bool:
 	var wish_card: Card = responder.hand[wish_index]
 	responder.hand.remove_at(wish_index)
 	_deck.send_to_discard(wish_card)
+	var countered_type: String = _pending_effect.type
+	var countered_kind := _card_kind_of(countered_type)
+	var actor_name: String = _players[int(_pending_effect.actor)].name
 	_emit("%s 打出【休想】！%s 的【%s】失效（两张牌均进弃牌堆）" % [
-		responder.name, _players[int(_pending_effect.actor)].name,
-		Card.display_name(_card_kind_of(_pending_effect.type))])
+		responder.name, actor_name, Card.display_name(countered_kind)])
 	_fx(NetProtocol.FX_WISH, responder_index, int(_pending_effect.actor),
-			int(_card_kind_of(_pending_effect.type)))
+			int(countered_kind))
 	_pending_effect = {}
+	# MECH-003 × MECH-012（v0.9.6 用户拍板）：【跳过】的唯一效果就是「不抽牌结束回合」，
+	# 它被休想反制 = 这个效果没发生 → 回合不该结束，交还给出牌者继续其本回合
+	# （仍需照常抽牌/出牌）。其余功能牌被反制则效果作废、回合正常轮转。
+	if countered_type == "skip":
+		phase = TurnPhase.ACTION
+		var draw_note := ""
+		if _required_draws > 1:
+			draw_note = "（曾被攻击，本回合还需抽 %d 次）" % _required_draws
+		_emit("%s 的回合未结束：仍须照常抽牌或出牌%s" % [actor_name, draw_note])
+		return true
 	_end_turn()
 	return true
 
@@ -490,9 +518,7 @@ func normal_draw() -> void:
 
 	var card := _deck.try_draw_top()
 	if card == null:
-		# MECH-011 兜底：弃牌堆也为空，跳过回合
-		_emit("牌池与弃牌堆均耗尽，" + current().name + " 跳过回合")
-		_end_turn()
+		_settle_exhausted()
 		return
 
 	if card.kind == Card.Kind.BOMB:
@@ -517,8 +543,8 @@ func overdraw_draw() -> void:
 
 	var card := _deck.try_draw_top()
 	if card == null:
-		_emit("牌池与弃牌堆均耗尽，透支中止")
-		stop_overdraw()
+		_emit("透支中牌池与弃牌堆均已耗尽")
+		_settle_exhausted()
 		return
 
 	if card.kind == Card.Kind.BOMB:
@@ -529,7 +555,11 @@ func overdraw_draw() -> void:
 		return
 
 	current().overdraw_zone.append(card)
-	_emit("透支 +1：【%s】进透支区（共 %d 张，喊停全部入手，抽中爆弹全弃）" % [Card.display_name(card.kind), current().overdraw_zone.size()])
+	# v0.9.6 用户拍板：透支抽到的**具体牌只给本人看**。公共日志只报"透支区 +1"，
+	# 牌名走私密通道；牌面特效（FX_DRAW）在客户端也只有本人看得见正面。
+	_emit("透支 +1（透支区共 %d 张）" % current().overdraw_zone.size())
+	_emit_private("你抽到【%s】，已置入透支区（共 %d 张）" % [
+			Card.display_name(card.kind), current().overdraw_zone.size()], _current)
 	_fx(NetProtocol.FX_DRAW, _current, -1, int(card.kind))
 
 
@@ -585,6 +615,39 @@ func _discard_overdraw_zone() -> void:
 	for card in current().overdraw_zone:
 		_deck.send_to_discard(card)
 	current().overdraw_zone.clear()
+
+
+## MECH-015（保底终局）：需要抽牌但公共牌池与弃牌堆都已空、无法重洗。
+## 此情形下牌堆里不可能还剩爆弹（爆弹只会回到牌堆或被引爆），所以胜负已无法由引爆裁决，
+## 改以存活玩家的手牌数裁定：最多者获胜；并列最多则判和。绝不空转刷"跳过回合"。
+## 注：手牌数为纯手牌张数，不含透支区（透支区是尚未落袋的风险牌）。
+func _settle_exhausted() -> void:
+	exhausted_end = true
+	draw_game = false
+	winner = null
+	_pending_effect = {}
+	phase = TurnPhase.GAME_OVER
+
+	var alive := _players.filter(func(pl: PlayerState) -> bool: return pl.alive)
+	if alive.is_empty():
+		_emit("牌池与弃牌堆均已耗尽，且无存活玩家，本局结束")
+		return
+
+	var best := 0
+	for player in alive:
+		best = maxi(best, player.hand.size())
+	var tops := alive.filter(func(pl: PlayerState) -> bool: return pl.hand.size() == best)
+	if tops.size() == 1:
+		winner = tops[0]
+		_emit("牌池与弃牌堆均已耗尽，无法继续抽牌。按手牌数裁定：%s 以 %d 张手牌获胜" % [
+				winner.name, best])
+	else:
+		draw_game = true
+		var names := PackedStringArray()
+		for player in tops:
+			names.append(player.name)
+		_emit("牌池与弃牌堆均已耗尽，无法继续抽牌。%s 手牌并列 %d 张，本局判和" % [
+				"、".join(names), best])
 
 
 func _end_turn() -> void:

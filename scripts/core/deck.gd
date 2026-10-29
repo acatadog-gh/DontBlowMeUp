@@ -24,10 +24,6 @@ func discard_count() -> int:
 	return _discard.size()
 
 
-func exploded_bomb_count() -> int:
-	return _exploded_bombs.size()
-
-
 ## 按 NUM-001 构建整副牌并洗混：bombs=P-1，defuse_in_pile=P-1，功能牌 49 张（v0.8 工具类 15 张等量）。
 ## pliers_counts 为 5 种拆弹工具各自的张数（MECH-013）。
 func build(player_count: int, skip_count: int, attack_count: int, peek_count: int,

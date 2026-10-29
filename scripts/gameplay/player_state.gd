@@ -32,11 +32,3 @@ func defuse_index() -> int:
 		if hand[i].kind == Card.Kind.DEFUSE:
 			return i
 	return -1
-
-
-func func_card_count() -> int:
-	var n := 0
-	for card in hand:
-		if card.kind != Card.Kind.BOMB:
-			n += 1
-	return n

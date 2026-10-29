@@ -20,6 +20,7 @@ func _initialize() -> void:
 	_test_deck_composition()
 	_test_dealing()
 	_test_discard_refill()
+	_test_exhausted_settle()
 	_test_turn_rotation()
 	_test_overdraw_stop()
 	_test_overdraw_bomb()
@@ -145,6 +146,78 @@ func _test_discard_refill() -> void:
 	_check(recovered != null, "弃牌重洗后可继续抽牌（MECH-011）")
 
 
+## MECH-015（v0.9.8 用户拍板）：牌池与弃牌堆双空时不再"跳过回合"空转，
+## 改以存活玩家手牌数裁定终局——最多者胜，并列最多判和。
+func _test_exhausted_settle() -> void:
+	print("[4b] 牌池双空保底终局（MECH-015）")
+
+	# A) 手牌最多者独占 → 其获胜
+	var machine := _new_machine(PackedStringArray(["甲", "乙", "丙"]), 61)
+	_empty_piles(machine)
+	machine._current = 0
+	_set_hand(machine.players()[0], 1)
+	_set_hand(machine.players()[1], 3)
+	_set_hand(machine.players()[2], 2)
+	machine.normal_draw()
+	_check(machine.phase == TurnStateMachine.TurnPhase.GAME_OVER,
+			"双空时抽牌立即终局（不再跳过回合空转）")
+	_check(machine.exhausted_end, "终局原因标记为牌池耗尽")
+	_check(not machine.draw_game, "手牌最多者独占时不判和")
+	_check(machine.winner != null and machine.winner.name == "乙",
+			"手牌最多者（乙 3 张）获胜")
+
+	# B) 两人并列最多 → 判和
+	var m2 := _new_machine(PackedStringArray(["甲", "乙", "丙"]), 62)
+	_empty_piles(m2)
+	m2._current = 0
+	_set_hand(m2.players()[0], 2)
+	_set_hand(m2.players()[1], 3)
+	_set_hand(m2.players()[2], 3)
+	m2.normal_draw()
+	_check(m2.phase == TurnStateMachine.TurnPhase.GAME_OVER and m2.exhausted_end,
+			"并列最多同样立即终局")
+	_check(m2.winner == null, "并列最多没有赢家")
+	_check(m2.draw_game, "并列最多判定为平局")
+
+	# C) 出局玩家不参与裁定（出局者手牌最多也不算赢）
+	var m3 := _new_machine(PackedStringArray(["甲", "乙", "丙"]), 63)
+	_empty_piles(m3)
+	m3._current = 0
+	_set_hand(m3.players()[0], 1)
+	_set_hand(m3.players()[1], 5)
+	m3.players()[1].eliminate()
+	_set_hand(m3.players()[2], 2)
+	m3.normal_draw()
+	_check(m3.winner != null and m3.winner.name == "丙",
+			"出局玩家的手牌不参与裁定（丙 2 张胜乙 5 张）")
+
+	# D) 透支中抽空牌池 → 同样走保底终局，不会卡在透支阶段
+	var m4 := _new_machine(PackedStringArray(["甲", "乙"]), 64)
+	_empty_piles(m4)
+	m4._current = 0
+	m4.phase = TurnStateMachine.TurnPhase.OVERDRAW
+	_set_hand(m4.players()[0], 1)
+	_set_hand(m4.players()[1], 4)
+	m4.overdraw_draw()
+	_check(m4.phase == TurnStateMachine.TurnPhase.GAME_OVER and m4.exhausted_end,
+			"透支中双空也立即终局（不卡在透支阶段）")
+	_check(m4.winner != null and m4.winner.name == "乙", "透支中双空按手牌裁定（乙胜）")
+
+
+## 把两块牌池清空（仅测试内直接改权威状态，用于构造不可达的极端局面）。
+func _empty_piles(machine: TurnStateMachine) -> void:
+	machine._deck._draw.clear()
+	machine._deck._discard.clear()
+	machine.phase = TurnStateMachine.TurnPhase.ACTION
+
+
+## 把手牌换成 count 张（内容不重要，只用于手牌数裁定）。
+func _set_hand(player: PlayerState, count: int) -> void:
+	player.hand.clear()
+	for i in count:
+		player.hand.append(Card.new(Card.Kind.SKIP, 80000 + i))
+
+
 func _test_turn_rotation() -> void:
 	print("[5] 轮转规则 v0.6：出 1 张功能牌 / 抽 1 张牌后立即轮到下一位（MECH-009）")
 	var machine := _new_machine(PackedStringArray(["甲", "乙", "丙"]), 31)
@@ -193,6 +266,32 @@ func _test_overdraw_stop() -> void:
 	_check(actor.hand.size() == before - 1 + zone_size, "打出透支牌 −1、透支区 %d 张入手，手牌 %d" % [zone_size, actor.hand.size()])
 	_check(actor.overdraw_zone.is_empty(), "喊停后透支区清空")
 
+	# MECH-008（v0.9.6 用户拍板）：透支抽到的具体牌只给本人看，公共日志里不出现牌名
+	var verified := false
+	for seed_value in range(1, 40):
+		var mp := _new_machine(PackedStringArray(["甲", "乙"]), seed_value)
+		var drawer := mp.current()
+		var pub_msgs: PackedStringArray = []
+		var priv_msgs: PackedStringArray = []
+		mp.log_message.connect(func(msg: String) -> void: pub_msgs.append(msg))
+		mp.log_private.connect(func(msg: String, idx: int) -> void:
+			if idx == 0:
+				priv_msgs.append(msg))
+		drawer.hand.append(Card.new(Card.Kind.OVERDRAW, 9979))
+		mp.play_overdraw(drawer.hand.size() - 1)
+		_resolve_responses(mp)
+		mp.overdraw_draw()
+		if drawer.overdraw_zone.is_empty():
+			continue   # 抽到爆弹，换种子再验
+		var drawn_name := Card.display_name(drawer.overdraw_zone[0].kind)
+		_check(not " ".join(pub_msgs).contains(drawn_name),
+				"透支牌名不进公共日志（种子 %d）" % seed_value)
+		_check(" ".join(priv_msgs).contains(drawn_name),
+				"透支牌名只发给出牌者本人（种子 %d）" % seed_value)
+		verified = true
+		break
+	_check(verified, "找到可验证的透支抽牌用例")
+
 
 func _test_overdraw_bomb() -> void:
 	print("[7] 透支·抽到爆弹（MECH-008）")
@@ -240,6 +339,8 @@ func _test_wish_counter() -> void:
 	# v0.9.1：由持牌者本人主动打出（传入其下标），不再按座次轮询
 	_check(machine.respond_wish(true, 2), "丙打出休想，偷牌失效")
 	_check(machine.phase == TurnStateMachine.TurnPhase.ACTION, "休想后回合结束轮转")
+	# MECH-012（2026-10-29 补明确）：反制成功后回合交给被反制者的下一位存活玩家
+	_check(machine.current_index() == 1, "休想后回合交给下一位（乙），出牌者本回合直接结束")
 	_check(victim.hand.size() == victim_count + 1, "偷牌失效：目标手牌未被偷走")
 	_check(responder.hand.size() == 5, "休想牌已消耗（丙剩 5 张）")
 	_check(not actor.alive == false, "打出者存活")
@@ -256,6 +357,32 @@ func _test_wish_counter() -> void:
 	_check(not m2.respond_wish(true, 1), "无牌者尝试反制被拒绝（乙没有休想）")
 	_check(m2.respond_wish(false), "无人反制，效果结算")
 	_check(m2.phase == TurnStateMachine.TurnPhase.ACTION, "结算后轮转")
+
+	# 边界：出局玩家的手牌不清理，但不能再用它打出休想
+	var m3 := _new_machine(PackedStringArray(["甲", "乙", "丙"]), 31)
+	var a3 := m3.current()
+	a3.hand.append(Card.new(Card.Kind.SKIP, 9993))
+	var dead := m3.players()[1]
+	dead.hand.append(Card.new(Card.Kind.WISH, 9992))
+	dead.eliminate()
+	m3.play_skip(a3.hand.size() - 1)
+	_check(not m3.respond_wish(true, 1), "已出局玩家不能打出休想")
+	_check(m3.respond_wish(false), "由存活玩家放弃反制，效果正常结算")
+
+	# MECH-003 × MECH-012（v0.9.6 用户拍板）：【跳过】的唯一效果就是"不抽牌结束回合"，
+	# 被休想反制 = 该效果没有发生 → 回合不结束，出牌者留在自己回合照常抽牌，不交下家。
+	var m4 := _new_machine(PackedStringArray(["甲", "乙", "丙"]), 41)
+	var a4 := m4.current()
+	a4.hand.append(Card.new(Card.Kind.SKIP, 9989))
+	var w4 := m4.players()[2]
+	w4.hand.append(Card.new(Card.Kind.WISH, 9988))
+	_check(m4.play_skip(a4.hand.size() - 1), "打出跳过进入匿名响应窗口")
+	_check(m4.respond_wish(true, 2), "丙打出休想，跳过失效")
+	_check(m4.current_index() == 0, "跳过被反制：回合未交给下家，仍在出牌者身上")
+	_check(m4.phase == TurnStateMachine.TurnPhase.ACTION, "跳过被反制：回到出牌阶段而非结束回合")
+	_check(m4._required_draws == 1, "跳过被反制：出牌者仍需照常抽 1 张（没被跳过）")
+	a4.hand.append(Card.new(Card.Kind.SKIP, 9987))
+	_check(m4.play_skip(a4.hand.size() - 1), "反制后出牌者仍能在本回合继续出牌（回合未结束）")
 
 
 func _test_pliers_trio() -> void:

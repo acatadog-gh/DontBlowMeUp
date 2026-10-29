@@ -1,0 +1,12 @@
+# 换行符统一，避免 Win / macOS 互拉后脚本失效或整文件 diff
+# Windows 批处理必须是 CRLF，macOS/Linux 脚本与全部源码必须是 LF
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+*.command  text eol=lf
+*.sh       text eol=lf
+*.gd       text eol=lf
+*.md       text eol=lf
+*.json     text eol=lf
+*.cfg      text eol=lf
+*.tscn     text eol=lf
+*.godot    text eol=lf

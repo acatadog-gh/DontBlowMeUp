@@ -1,5 +1,7 @@
 # Godot
 .godot/
+# 便携版 Godot 解压到这里，tools 脚本会自动认（不进版本库）
+godot/
 *.tmp
 
 # System

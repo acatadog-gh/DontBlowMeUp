@@ -26,6 +26,7 @@ var _zone_label: Label
 var _opponents_row: Control              # 对手槽容器（绝对定位）
 var _hand_area: Control                  # 扇形手牌区
 var _hand_cards: Array[CardView] = []
+var _zone_cards: Array[CardView] = []   # 透支区牌（单独一排，手牌上方）
 var _action_row: HBoxContainer
 var _target_row: HBoxContainer
 var _kind_row: HBoxContainer
@@ -400,6 +401,8 @@ func _on_start_game() -> void:
 	var rng := SeededRandom.new()
 	var sm := TurnStateMachine.new(Deck.new(rng), GameConfig.new(), rng)
 	sm.log_message.connect(_on_log)
+	# v0.9.6：私密日志（透支抽到的牌名等）只进本地日志
+	sm.log_private.connect(func(message: String, _player_index: int) -> void: _on_log(message))
 	sm.bomb_exploded.connect(_on_bomb_exploded)
 	_sm = sm
 	_sm.start_game(names, int(Time.get_unix_time_from_system()))
@@ -437,7 +440,15 @@ func _refresh() -> void:
 	_clear_rows()
 
 	if _sm.phase == TurnStateMachine.TurnPhase.GAME_OVER:
-		_status_label.text = "游戏结束" + (("— 赢家：" + _sm.winner.name) if _sm.winner != null else "— 无存活玩家")
+		# MECH-015：牌池双空收场时可能是判和，不能一律写成"无存活玩家"
+		var over_text := "游戏结束"
+		if _sm.winner != null:
+			over_text += "— 赢家：" + _sm.winner.name
+		elif _sm.draw_game:
+			over_text += "— 平局（牌池耗尽，手牌并列最多）"
+		else:
+			over_text += "— 无存活玩家"
+		_status_label.text = over_text
 		_show_start_panel()
 		return
 
@@ -642,6 +653,7 @@ func _rebuild_hand(selected_set: Array, interactive := true) -> void:
 	for child in _hand_area.get_children():
 		child.queue_free()
 	_hand_cards.clear()
+	_zone_cards.clear()
 	if _sm == null:
 		return
 	var me := _sm.current()
@@ -749,9 +761,10 @@ func _refresh_overdraw() -> void:
 	_bomb_row.visible = false
 	_action_row.visible = true
 	var me := _sm.current()
-	_status_label.text = "%s 透支连抽中" % me.name
+	_status_label.text = ""   # 状态信息并入透支区说明行，避免被中间的牌挡住
 	_rebuild_hand([])
-	_zone_label.text = "透支区（%d 张）面朝上公开：喊停全部入手，再抽抽中爆弹全弃" % me.overdraw_zone.size()
+	_show_overdraw_zone(me.overdraw_zone)
+	_zone_label.text = ""   # 说明文字跟随透支牌排显示，避免被牌盖住
 	var keep_btn := Button.new()
 	keep_btn.text = "再抽一张（风险加大）"
 	_style_button(keep_btn)
@@ -767,6 +780,38 @@ func _refresh_overdraw() -> void:
 	_action_row.add_child(stop_btn)
 
 
+## v0.9.6：透支区牌面摊开给本人看（原先只报张数，玩家看不到自己抽了什么）。
+## 缩小牌排放在操作条上方、牌桌下缘的空档里，说明文字跟牌走，不挡按钮。
+func _show_overdraw_zone(zone: Array) -> void:
+	var n := zone.size()
+	if n == 0:
+		return
+	var s := 0.66
+	var card_h := CardView.CARD_SIZE.y * s
+	var card_w := CardView.CARD_SIZE.x * s
+	var spacing := minf(card_w + 14.0, (900.0 - card_w) / maxf(n - 1, 1))
+	var start_x := 640.0 - (n - 1) * spacing / 2.0 - card_w / 2.0
+	# CardView 的 pivot 在牌中心：缩放后实际绘制区比 position 下移 28.5px，预留出来避免压到操作条
+	var y := -(card_h + 95.0)
+	for i in n:
+		var view := CardView.new(zone[i].kind, true)
+		view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		view.scale = Vector2(s, s)
+		view.position = Vector2(start_x + i * spacing, y)
+		_hand_area.add_child(view)
+		_zone_cards.append(view)
+	var caption := Label.new()
+	caption.text = "%s 的透支区（%d 张，仅自己可见）：喊停全部入手，抽中爆弹全弃" % [
+			_sm.current().name, n]
+	caption.add_theme_font_size_override("font_size", 13)
+	caption.add_theme_color_override("font_color", GOLD)
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	caption.size = Vector2(460, 20)
+	caption.position = Vector2(640.0 - 230.0, y - 24.0)
+	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hand_area.add_child(caption)
+
+
 func _refresh_response() -> void:
 	_target_row.visible = false
 	_kind_row.visible = false
@@ -775,17 +820,21 @@ func _refresh_response() -> void:
 	_rebuild_hand([])
 	var effect: Dictionary = _sm.pending_effect()
 	var actor := _sm.players()[effect.actor]
-	_status_label.text = "响应时间：%s 打出了【%s】——持有休想牌的玩家可反制" % [
-		actor.name, _effect_label(effect.type)]
+	var holders := _wish_holders(int(effect.actor))
+	var tail := "——持【休想】者可反制" if not holders.is_empty() else ""
+	_status_label.text = "响应时间：%s 打出了【%s】%s" % [
+		actor.name, _effect_label(effect.type), tail]
 	# 匿名倒计时（v0.9.1）：不点名、不扫描，是否持有休想只有玩家自己知道
 	_response_token += 1
 	_run_response_countdown(_response_token)
-	var wish_btn := Button.new()
-	wish_btn.text = "打出【休想】！（反制该功能牌）"
-	wish_btn.tooltip_text = "只有手里真有休想牌的玩家才应点击；随后选择是谁打出。"
-	_style_button(wish_btn)
-	wish_btn.pressed.connect(_show_wish_picker)
-	_action_row.add_child(wish_btn)
+	# v0.9.6 用户拍板：场上没人持【休想】时不显示反制入口，避免"点了却提示反制无效"的误解
+	if not holders.is_empty():
+		var wish_btn := Button.new()
+		wish_btn.text = "打出【休想】！（反制该功能牌）"
+		wish_btn.tooltip_text = "请持牌者点这里，再点自己的名字。"
+		_style_button(wish_btn)
+		wish_btn.pressed.connect(_show_wish_picker)
+		_action_row.add_child(wish_btn)
 	var pass_btn := Button.new()
 	pass_btn.text = "无人反制，立即继续"
 	_style_button(pass_btn)
@@ -811,6 +860,22 @@ func _run_response_countdown(token: int) -> void:
 		_after_action()
 
 
+## 可反制者 = 活着的、非出牌者、手里确实有【休想】的人（v0.9.6）。
+func _wish_holders(actor_index: int) -> Array[int]:
+	var out: Array[int] = []
+	if _sm == null:
+		return out
+	for i in _sm.players().size():
+		var p := _sm.players()[i]
+		if i == actor_index or not p.alive:
+			continue
+		for card in p.hand:
+			if card.kind == Card.Kind.WISH:
+				out.append(i)
+				break
+	return out
+
+
 func _show_wish_picker() -> void:
 	_response_token += 1  # 进入选人阶段停掉倒计时，由玩家手动继续
 	for child in _target_row.get_children():
@@ -821,10 +886,9 @@ func _show_wish_picker() -> void:
 	var actor: int = _sm.pending_effect().actor
 	var hint := _make_label("谁要打出休想？（请持牌者点自己的名字）→", 14)
 	_target_row.add_child(hint)
-	for i in _sm.players().size():
+	# 只列真正持牌的人：选到没牌的人再提示"反制无效"会让玩家误解
+	for i in _wish_holders(actor):
 		var player := _sm.players()[i]
-		if i == actor or not player.alive:
-			continue
 		var idx := i
 		var btn := Button.new()
 		btn.text = player.name

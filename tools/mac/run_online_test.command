@@ -1,21 +1,16 @@
 #!/bin/zsh
-# 《别炸我！》一键联机测试：起服务器 + 开两个客户端窗口
-# 用法：从 Finder 双击本文件。改完客户端代码后重新双击即可（服务器会自动复用）。
-cd "$(dirname "$0")" || exit 1
+# 双击运行：一键联机测试 —— 起服务器 + 开两个客户端
+# 端口已被占用时会复用现有服务器（要重启就先关掉它的终端窗口）
+cd "$(dirname "$0")/../.." || exit 1
+. tools/mac/_godot.sh
+godot_or_die
+ensure_imported
 
 PORT=8920
-GODOT="/Applications/Godot.app/Contents/MacOS/Godot"
-[ -x "$GODOT" ] || GODOT="$(command -v godot 2>/dev/null)"
-if [ ! -x "$GODOT" ]; then
-	echo "❌ 找不到 Godot：请确认 /Applications/Godot.app 存在，或把 godot 加入 PATH"
-	exit 1
-fi
-
-echo "工程目录：$(pwd)"
+echo "工程：$(pwd)"
 echo "Godot：$("$GODOT" --version 2>/dev/null)"
 echo
 
-# 端口已占用 → 复用现有服务器（那个窗口里按 Ctrl+C 就能停）
 if lsof -ti "tcp:$PORT" >/dev/null 2>&1; then
 	echo "⚠  端口 $PORT 已在监听，复用现有服务器（要重启请先关掉它的终端窗口）"
 else

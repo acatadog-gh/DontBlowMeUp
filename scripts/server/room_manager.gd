@@ -41,11 +41,6 @@ func room_of_session(session_id: int) -> NetRoom:
 	return _rooms.get(code, null) if code != "" else null
 
 
-func seat_of_session(session_id: int) -> int:
-	var room := room_of_session(session_id)
-	return room.seat_of(session_id) if room != null else -1
-
-
 ## 会话断开：座位标记掉线；房间无人则回收。
 func session_offline(session_id: int) -> void:
 	var room := room_of_session(session_id)
