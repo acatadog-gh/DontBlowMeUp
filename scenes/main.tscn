@@ -1,0 +1,16 @@
+[gd_scene format=3 uid="uid://blokbkk6mlnnr"]
+
+[ext_resource type="Script" uid="uid://bfa2yd8f0tbjq" path="res://scripts/boot/main.gd" id="1_main"]
+
+[node name="Main" type="Control" unique_id=1505985171]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 0.0
+offset_top = 0.0
+offset_right = 0.0
+offset_bottom = 0.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_main")
